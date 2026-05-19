@@ -432,6 +432,51 @@
                 }
             });
 
+            // "수익금" 우측의 숫자를 위치 기반으로 찾기
+            const findRevenueByPosition = () => {
+                // "수익금" 단어를 찾기
+                let revenueWord = null;
+                for (let word of words) {
+                    if ((word.text || '').includes('수익금')) {
+                        revenueWord = word;
+                        break;
+                    }
+                }
+                
+                if (!revenueWord) return null;
+                
+                // "수익금"의 우측 경계(x1 좌표)를 기준으로 함
+                const revenueX = revenueWord.bbox?.x1 || 0;
+                const revenueY = (revenueWord.bbox?.y0 || 0) + (revenueWord.bbox?.y1 || 0) / 2;
+                
+                // "수익금" 우측에 있는 숫자들을 찾기 (같은 높이, 오른쪽)
+                const rightNumbers = [];
+                words.forEach((word) => {
+                    const wordText = word.text || '';
+                    const isNumber = /^\d+$/.test(wordText);
+                    if (isNumber) {
+                        const wordX0 = word.bbox?.x0 || 0;
+                        const wordY = (word.bbox?.y0 || 0) + (word.bbox?.y1 || 0) / 2;
+                        const yDiff = Math.abs(wordY - revenueY);
+                        
+                        // 같은 행 근처에 있고(y 차이 30픽셀 이내), "수익금"보다 우측
+                        if (yDiff < 30 && wordX0 > revenueX) {
+                            rightNumbers.push({
+                                value: parseInt(wordText),
+                                distance: wordX0 - revenueX,
+                                word
+                            });
+                        }
+                    }
+                });
+                
+                if (rightNumbers.length > 0) {
+                    // 가장 가까운 숫자 반환
+                    return rightNumbers.sort((a, b) => a.distance - b.distance)[0].value;
+                }
+                return null;
+            };
+
             // 먼저 모든 텍스트에서 (수익금:xxx원) 형식 찾기
             const findRevenueInParentheses = () => {
                 const fullText = result.data.text || '';
@@ -471,8 +516,11 @@
                 return bottomCandidates.sort((a, b) => b.value - a.value)[0].value;
             };
 
-            // 괄호 안의 (수익금:xxx) 형식을 최우선으로 찾기
-            let detectedAmount = findRevenueInParentheses();
+            // "수익금" 우측의 위치 기반 탐색을 최우선으로 (가장 정확)
+            let detectedAmount = findRevenueByPosition();
+            if (!detectedAmount) {
+                detectedAmount = findRevenueInParentheses();
+            }
             if (!detectedAmount) {
                 detectedAmount = findByKeyword([/수익금/, /수익금:/]);
             }
