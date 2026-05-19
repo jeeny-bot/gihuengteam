@@ -117,8 +117,8 @@
         </div>
         
         <div class="upload-box" onclick="document.getElementById('cardScanner').click()">
-            📸 <b>여기를 눌러 팀 콜카드 이미지 업로드 ("요금" 자동 추출)</b>
-            <input type="file" id="cardScanner" accept="image/*" style="display:none" onchange="processCardImage(this)">
+            📸 <b>여기를 눌러 팀 콜카드 이미지 여러장 업로드 ("요금" 자동 추출)</b>
+            <input type="file" id="cardScanner" accept="image/*" multiple style="display:none" onchange="processCardImage(this)">
             <div class="ocr-loading" id="ocrLoading">⏳ 이미지에서 "요금"을 분석하는 중입니다...</div>
         </div>
         
@@ -372,193 +372,205 @@
         alert(`계산 결과 ${resultValue.toLocaleString()}원이 입력되었습니다. 하단의 "추가" 버튼을 눌러 반영하세요.`);
     }
 
-    // 🔍 "요금" 타겟 정밀 인식 처리 스크립트 (로지 완료화면 매칭 추가)
+    // 🔍 "요금" 타겟 정밀 인식 처리 스크립트 - 여러 파일 지원
     function processCardImage(input) {
-        if (!input.files || !input.files[0]) return;
+        if (!input.files || input.files.length === 0) return;
         const loadingText = document.getElementById('ocrLoading');
         loadingText.style.display = 'block';
-
-        // 이미지 전처리: 캔버스를 사용해서 크기 축소 및 품질 최적화
-        const file = input.files[0];
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            const img = new Image();
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                const maxWidth = 800;
-                const maxHeight = 600;
-                let width = img.width;
-                let height = img.height;
-                
-                // 비율 유지하면서 최대 크기로 축소
-                if (width > height) {
-                    if (width > maxWidth) {
-                        height = Math.round((height * maxWidth) / width);
-                        width = maxWidth;
-                    }
-                } else {
-                    if (height > maxHeight) {
-                        width = Math.round((width * maxHeight) / height);
-                        height = maxHeight;
-                    }
+        
+        let totalDetected = 0;
+        let processedCount = 0;
+        const totalFiles = input.files.length;
+        
+        // 모든 파일을 순차적으로 처리하는 재귀 함수
+        const processNextFile = (fileIndex) => {
+            if (fileIndex >= totalFiles) {
+                // 모든 파일 처리 완료
+                loadingText.style.display = 'none';
+                if (totalDetected > 0) {
+                    const currentInput = document.getElementById('myRevenueInput');
+                    const newTotal = (parseInt(currentInput.value, 10) || 0) + totalDetected;
+                    currentInput.value = newTotal;
+                    db.ref('team_drive/' + myName).update({ revenue: newTotal });
+                    updateSelectedShare(currentTotalRevenue);
+                    alert(`콜카드 ${totalFiles}장에서 총 ${totalDetected.toLocaleString()}원이 자동으로 합산되었습니다.`);
                 }
-                
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
-                
-                // 최적화된 이미지 blob으로 변환
-                canvas.toBlob((blob) => {
-                    Tesseract.recognize(blob, 'kor+eng', {
-                        logger: m => console.log(m)
-                    }).then((result) => {
-            loadingText.style.display = 'none';
-            const text = result.data.text || '';
-            const words = result.data.words || [];
-            const lines = result.data.lines || [];
-
-            const parseNumber = (value) => {
-                const cleaned = value.replace(/[^0-9]/g, '');
-                return cleaned ? parseInt(cleaned, 10) : null;
-            };
-
-            const numberCandidates = [];
-            words.forEach((word) => {
-                const value = parseNumber(word.text || '');
-                if (value && value >= 1000 && value <= 2000000) {
-                    const yCenter = ((word.bbox?.y0 || word.bbox?.y1 || 0) + (word.bbox?.y1 || word.bbox?.y0 || 0)) / 2;
-                    numberCandidates.push({ value, word, yCenter });
-                }
-            });
-
-            // "수익금" 우측의 숫자를 위치 기반으로 찾기
-            const findRevenueByPosition = () => {
-                // "수익금" 단어를 찾기
-                let revenueWord = null;
-                for (let word of words) {
-                    if ((word.text || '').includes('수익금')) {
-                        revenueWord = word;
-                        break;
+                return;
+            }
+            
+            const file = input.files[fileIndex];
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const maxWidth = 800;
+                    const maxHeight = 600;
+                    let width = img.width;
+                    let height = img.height;
+                    
+                    // 비율 유지하면서 최대 크기로 축소
+                    if (width > height) {
+                        if (width > maxWidth) {
+                            height = Math.round((height * maxWidth) / width);
+                            width = maxWidth;
+                        }
+                    } else {
+                        if (height > maxHeight) {
+                            width = Math.round((width * maxHeight) / height);
+                            height = maxHeight;
+                        }
                     }
-                }
-                
-                if (!revenueWord) return null;
-                
-                // "수익금"의 우측 경계(x1 좌표)를 기준으로 함
-                const revenueX = revenueWord.bbox?.x1 || 0;
-                const revenueY = (revenueWord.bbox?.y0 || 0) + (revenueWord.bbox?.y1 || 0) / 2;
-                
-                // "수익금" 우측에 있는 숫자들을 찾기 (같은 높이, 오른쪽)
-                const rightNumbers = [];
-                words.forEach((word) => {
-                    const wordText = word.text || '';
-                    const isNumber = /^\d+$/.test(wordText);
-                    if (isNumber) {
-                        const wordX0 = word.bbox?.x0 || 0;
-                        const wordY = (word.bbox?.y0 || 0) + (word.bbox?.y1 || 0) / 2;
-                        const yDiff = Math.abs(wordY - revenueY);
-                        
-                        // 같은 행 근처에 있고(y 차이 30픽셀 이내), "수익금"보다 우측
-                        if (yDiff < 30 && wordX0 > revenueX) {
-                            rightNumbers.push({
-                                value: parseInt(wordText),
-                                distance: wordX0 - revenueX,
-                                word
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    // 최적화된 이미지 blob으로 변환
+                    canvas.toBlob((blob) => {
+                        Tesseract.recognize(blob, 'kor+eng', {
+                            logger: m => console.log(m)
+                        }).then((result) => {
+                            const text = result.data.text || '';
+                            const words = result.data.words || [];
+                            const lines = result.data.lines || [];
+
+                            const parseNumber = (value) => {
+                                const cleaned = value.replace(/[^0-9]/g, '');
+                                return cleaned ? parseInt(cleaned, 10) : null;
+                            };
+
+                            const numberCandidates = [];
+                            words.forEach((word) => {
+                                const value = parseNumber(word.text || '');
+                                if (value && value >= 1000 && value <= 2000000) {
+                                    const yCenter = ((word.bbox?.y0 || word.bbox?.y1 || 0) + (word.bbox?.y1 || word.bbox?.y0 || 0)) / 2;
+                                    numberCandidates.push({ value, word, yCenter });
+                                }
                             });
-                        }
-                    }
-                });
-                
-                if (rightNumbers.length > 0) {
-                    // 가장 가까운 숫자 반환
-                    return rightNumbers.sort((a, b) => a.distance - b.distance)[0].value;
-                }
-                return null;
-            };
 
-            // 먼저 모든 텍스트에서 (수익금:xxx원) 형식 찾기
-            const findRevenueInParentheses = () => {
-                const fullText = result.data.text || '';
-                // (수익금:xxxxx원) 또는 (수익금:xxxxx) 형식 찾기 (콤마 포함)
-                const match = fullText.replace(/\s+/g, '').match(/\(수익금:([0-9,]+)/);
-                if (match) {
-                    const value = match[1].replace(/,/g, ''); // 콤마 제거
-                    return parseInt(value, 10);
-                }
-                return null;
-            };
+                            // "수익금" 우측의 숫자를 위치 기반으로 찾기
+                            const findRevenueByPosition = () => {
+                                let revenueWord = null;
+                                for (let word of words) {
+                                    if ((word.text || '').includes('수익금')) {
+                                        revenueWord = word;
+                                        break;
+                                    }
+                                }
+                                
+                                if (!revenueWord) return null;
+                                
+                                const revenueX = revenueWord.bbox?.x1 || 0;
+                                const revenueY = (revenueWord.bbox?.y0 || 0) + (revenueWord.bbox?.y1 || 0) / 2;
+                                
+                                const rightNumbers = [];
+                                words.forEach((word) => {
+                                    const wordText = word.text || '';
+                                    const isNumber = /^\d+$/.test(wordText);
+                                    if (isNumber) {
+                                        const wordX0 = word.bbox?.x0 || 0;
+                                        const wordY = (word.bbox?.y0 || 0) + (word.bbox?.y1 || 0) / 2;
+                                        const yDiff = Math.abs(wordY - revenueY);
+                                        
+                                        if (yDiff < 30 && wordX0 > revenueX) {
+                                            rightNumbers.push({
+                                                value: parseInt(wordText),
+                                                distance: wordX0 - revenueX,
+                                                word
+                                            });
+                                        }
+                                    }
+                                });
+                                
+                                if (rightNumbers.length > 0) {
+                                    return rightNumbers.sort((a, b) => a.distance - b.distance)[0].value;
+                                }
+                                return null;
+                            };
 
-            const findByKeyword = (patterns) => {
-                for (let i = 0; i < lines.length; i++) {
-                    const lineText = (lines[i].text || '').replace(/\s+/g, '');
-                    if (patterns.some(pattern => pattern.test(lineText))) {
-                        // "수익금:" 패턴이면 콜론 뒤의 숫자를 정확히 추출
-                        if (/수익금:/.test(lineText)) {
-                            const match = lineText.replace(/,/g, '').match(/수익금:(\d{4,7})/);
-                            if (match) return parseInt(match[1], 10);
-                        }
-                        let match = lineText.replace(/,/g, '').match(/\d{4,7}/);
-                        if (match) return parseInt(match[0], 10);
-                        const nextLine = (lines[i + 1] && (lines[i + 1].text || '').replace(/\s+/g, '')) || '';
-                        match = nextLine.replace(/,/g, '').match(/\d{4,7}/);
-                        if (match) return parseInt(match[0], 10);
-                    }
-                }
-                return null;
-            };
+                            // 먼저 모든 텍스트에서 (수익금:xxx원) 형식 찾기
+                            const findRevenueInParentheses = () => {
+                                const fullText = result.data.text || '';
+                                const match = fullText.replace(/\s+/g, '').match(/\(수익금:([0-9,]+)/);
+                                if (match) {
+                                    const value = match[1].replace(/,/g, '');
+                                    return parseInt(value, 10);
+                                }
+                                return null;
+                            };
 
-            const bottomRightAmount = () => {
-                if (!numberCandidates.length) return null;
-                const maxY = Math.max(...numberCandidates.map(c => c.yCenter));
-                const bottomCandidates = numberCandidates.filter(c => c.yCenter >= maxY * 0.65);
-                if (!bottomCandidates.length) return null;
-                return bottomCandidates.sort((a, b) => b.value - a.value)[0].value;
-            };
+                            const findByKeyword = (patterns) => {
+                                for (let i = 0; i < lines.length; i++) {
+                                    const lineText = (lines[i].text || '').replace(/\s+/g, '');
+                                    if (patterns.some(pattern => pattern.test(lineText))) {
+                                        if (/수익금:/.test(lineText)) {
+                                            const match = lineText.replace(/,/g, '').match(/수익금:(\d{4,7})/);
+                                            if (match) return parseInt(match[1], 10);
+                                        }
+                                        let match = lineText.replace(/,/g, '').match(/\d{4,7}/);
+                                        if (match) return parseInt(match[0], 10);
+                                        const nextLine = (lines[i + 1] && (lines[i + 1].text || '').replace(/\s+/g, '')) || '';
+                                        match = nextLine.replace(/,/g, '').match(/\d{4,7}/);
+                                        if (match) return parseInt(match[0], 10);
+                                    }
+                                }
+                                return null;
+                            };
 
-            // "수익금" 우측의 위치 기반 탐색을 최우선으로 (가장 정확)
-            let detectedAmount = findRevenueByPosition();
-            if (!detectedAmount) {
-                detectedAmount = findRevenueInParentheses();
-            }
-            if (!detectedAmount) {
-                detectedAmount = findByKeyword([/수익금/, /수익금:/]);
-            }
-            if (!detectedAmount) {
-                detectedAmount = findByKeyword([/총수입/, /총수입:/, /총수입/]);
-            }
-            if (!detectedAmount) {
-                detectedAmount = findByKeyword([/합계/, /총합계/, /총액/, /총금액/, /요금/]);
-            }
-            if (!detectedAmount) {
-                detectedAmount = bottomRightAmount();
-            }
-            if (!detectedAmount) {
-                const fallback = text.replace(/,/g, '').match(/\d{4,7}/g);
-                if (fallback && fallback.length) {
-                    detectedAmount = Math.max(...fallback.map(Number));
-                }
-            }
+                            const bottomRightAmount = () => {
+                                if (!numberCandidates.length) return null;
+                                const maxY = Math.max(...numberCandidates.map(c => c.yCenter));
+                                const bottomCandidates = numberCandidates.filter(c => c.yCenter >= maxY * 0.65);
+                                if (!bottomCandidates.length) return null;
+                                return bottomCandidates.sort((a, b) => b.value - a.value)[0].value;
+                            };
 
-            if (detectedAmount) {
-                const currentInput = document.getElementById('myRevenueInput');
-                const newTotal = (parseInt(currentInput.value, 10) || 0) + detectedAmount;
-                currentInput.value = newTotal;
-                db.ref('team_drive/' + myName).update({ revenue: newTotal });
-                updateSelectedShare(currentTotalRevenue);
-                alert(`콜카드 금액 ${detectedAmount.toLocaleString()}원 이 자동으로 합산되었습니다.`);
-            } else {
-                alert("요금 글자나 금액을 찾지 못했습니다. 우측 입력창에 수동으로 합산해 주세요.");
-            }
-                    }).catch(() => {
-                        loadingText.style.display = 'none';
-                        alert("분석 실패: 수동 기입 요망");
-                    });
-                }, 'image/jpeg', 0.85);
+                            // "수익금" 우측의 위치 기반 탐색을 최우선으로
+                            let detectedAmount = findRevenueByPosition();
+                            if (!detectedAmount) {
+                                detectedAmount = findRevenueInParentheses();
+                            }
+                            if (!detectedAmount) {
+                                detectedAmount = findByKeyword([/수익금/, /수익금:/]);
+                            }
+                            if (!detectedAmount) {
+                                detectedAmount = findByKeyword([/총수입/, /총수입:/, /총수입/]);
+                            }
+                            if (!detectedAmount) {
+                                detectedAmount = findByKeyword([/합계/, /총합계/, /총액/, /총금액/, /요금/]);
+                            }
+                            if (!detectedAmount) {
+                                detectedAmount = bottomRightAmount();
+                            }
+                            if (!detectedAmount) {
+                                const fallback = text.replace(/,/g, '').match(/\d{4,7}/g);
+                                if (fallback && fallback.length) {
+                                    detectedAmount = Math.max(...fallback.map(Number));
+                                }
+                            }
+
+                            if (detectedAmount) {
+                                totalDetected += detectedAmount;
+                                console.log(`파일 ${fileIndex + 1}: ${detectedAmount.toLocaleString()}원 인식됨`);
+                            }
+                            
+                            // 다음 파일 처리
+                            processNextFile(fileIndex + 1);
+                        }).catch(() => {
+                            console.log(`파일 ${fileIndex + 1} 분석 실패`);
+                            processNextFile(fileIndex + 1);
+                        });
+                    }, 'image/jpeg', 0.85);
+                };
+                img.src = e.target.result;
             };
-            img.src = e.target.result;
+            reader.readAsDataURL(file);
         };
-        reader.readAsDataURL(file);
+        
+        // 첫 번째 파일부터 시작
+        processNextFile(0);
     }
 
     function setUploadComplete() {
