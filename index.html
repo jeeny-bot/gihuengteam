@@ -205,6 +205,51 @@
     let currentTotalRevenue = 0;
     const selectedMembers = new Set(["멤버1", "멤버2", "멤버3", "멤버4"]);
 
+    const saveLocalState = () => {
+        try {
+            localStorage.setItem('gihueng_memberAccounts', JSON.stringify(memberAccounts));
+            localStorage.setItem('gihueng_myIdentity', myName);
+            const revenueInput = document.getElementById('myRevenueInput');
+            if (revenueInput) localStorage.setItem('gihueng_myRevenueInput', revenueInput.value);
+        } catch (e) {
+            console.warn('로컬 저장소에 값을 저장할 수 없습니다.', e);
+        }
+    };
+
+    const loadLocalState = () => {
+        try {
+            const storedMembers = localStorage.getItem('gihueng_memberAccounts');
+            if (storedMembers) {
+                const parsed = JSON.parse(storedMembers);
+                if (parsed && typeof parsed === 'object') {
+                    Object.keys(memberAccounts).forEach(key => {
+                        if (parsed[key]) {
+                            memberAccounts[key] = {
+                                ...memberAccounts[key],
+                                ...parsed[key]
+                            };
+                        }
+                    });
+                }
+            }
+            const storedIdentity = localStorage.getItem('gihueng_myIdentity');
+            if (storedIdentity && memberAccounts[storedIdentity]) {
+                myName = storedIdentity;
+                document.getElementById('myIdentity').value = myName;
+                document.getElementById('myNameLabel').innerText = myName;
+            }
+            const storedRevenue = localStorage.getItem('gihueng_myRevenueInput');
+            if (storedRevenue !== null) {
+                const parsedRevenue = parseInt(storedRevenue, 10);
+                if (!Number.isNaN(parsedRevenue)) {
+                    document.getElementById('myRevenueInput').value = parsedRevenue;
+                }
+            }
+        } catch (e) {
+            console.warn('로컬 저장소에서 값을 불러올 수 없습니다.', e);
+        }
+    };
+
     function renderMemberAccountList() {
         const list = document.getElementById('memberAccountList');
         let html = '';
@@ -264,15 +309,18 @@
     function updateMemberLabel(key, value) {
         memberAccounts[key].label = value || key;
         renderMemberSelector();
+        saveLocalState();
     }
 
     function updateMemberBank(key, value) {
         memberAccounts[key].bank = value;
         renderMemberAccountList();
+        saveLocalState();
     }
 
     function updateMemberAccount(key, value) {
         memberAccounts[key].account = value;
+        saveLocalState();
     }
 
     function toggleMemberSelection(key, checked) {
@@ -295,6 +343,7 @@
     }
 
     window.addEventListener('load', () => {
+        loadLocalState();
         renderMemberAccountList();
         renderMemberSelector();
         updateSelectedShare(0);
@@ -303,15 +352,19 @@
     function changeIdentity() {
         myName = document.getElementById('myIdentity').value;
         document.getElementById('myNameLabel').innerText = myName;
+        saveLocalState();
         db.ref('team_drive/' + myName).once('value', (snapshot) => {
             const data = snapshot.val();
-            if(data) document.getElementById('myRevenueInput').value = data.revenue || 0;
+            if(data) {
+                document.getElementById('myRevenueInput').value = data.revenue || 0;
+            }
         });
     }
 
     document.getElementById('myRevenueInput').addEventListener('input', function() {
         let currentVal = parseInt(this.value) || 0;
         db.ref('team_drive/' + myName).update({ revenue: currentVal });
+        saveLocalState();
         updateSelectedShare(currentTotalRevenue);
     });
 
@@ -454,7 +507,7 @@
                             });
 
 
-                            const normalizeText = (value) => (value || '').replace(/\s+/g, '').toLowerCase();
+                            const normalizeText = (value) => (value || '').replace(/[\s,\.]+/g, '').toLowerCase();
 
                             const findNumberAfterKeyword = (lineText, keyword) => {
                                 const normalizedLine = normalizeText(lineText);
@@ -462,6 +515,8 @@
                                 const idx = normalizedLine.indexOf(normalizedKeyword);
                                 if (idx === -1) return null;
                                 const remainder = normalizedLine.slice(idx + normalizedKeyword.length);
+                                const digits = remainder.replace(/[^0-9]/g, '');
+                                if (digits.length >= 4 && digits.length <= 7) return parseInt(digits, 10);
                                 const match = remainder.match(/([0-9]{4,7})/);
                                 if (match) return parseInt(match[1], 10);
                                 return null;
@@ -511,11 +566,27 @@
                                 return candidates.sort((a, b) => a.distance - b.distance)[0].value;
                             };
 
+                            const findRevenueFromFullText = (text) => {
+                                const cleanedText = normalizeText(text);
+                                const keywordPatterns = ["수익금", "예상수익금", "실수익", "확정요금"];
+                                for (const keyword of keywordPatterns) {
+                                    const idx = cleanedText.indexOf(normalizeText(keyword));
+                                    if (idx !== -1) {
+                                        const remainder = cleanedText.slice(idx + normalizeText(keyword).length);
+                                        const digits = remainder.replace(/[^0-9]/g, '');
+                                        if (digits.length >= 4 && digits.length <= 7) return parseInt(digits, 10);
+                                    }
+                                }
+                                return null;
+                            };
+
                             const findRevenueAmount = () => {
                                 const keywordGroups = ["수익금", "예상수익금", "실수익", "확정요금"];
                                 const rightAmount = findKeywordRightAmount(keywordGroups);
                                 if (rightAmount) return rightAmount;
-                                return findKeywordLineAmount(keywordGroups);
+                                const lineAmount = findKeywordLineAmount(keywordGroups);
+                                if (lineAmount) return lineAmount;
+                                return findRevenueFromFullText(text);
                             };
 
                             const detectedAmount = findRevenueAmount();
@@ -550,6 +621,7 @@
     function resetMyData() {
         if(confirm("내 데이터를 초기화할까요?")) {
             document.getElementById('myRevenueInput').value = 0;
+            saveLocalState();
             db.ref('team_drive/' + myName).set({ name: myName, revenue: 0, status: "대기" });
         }
     }
