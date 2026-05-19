@@ -519,6 +519,71 @@
                                 return null;
                             };
 
+                            // "예상수익금", "실수익" 등의 우측 숫자를 찾기
+                            const findByKeywordRight = (keywords) => {
+                                let targetWord = null;
+                                for (let word of words) {
+                                    const wordText = word.text || '';
+                                    if (keywords.some(k => wordText.includes(k))) {
+                                        targetWord = word;
+                                        break;
+                                    }
+                                }
+                                
+                                if (!targetWord) return null;
+                                
+                                const targetX = targetWord.bbox?.x1 || 0;
+                                const targetY = (targetWord.bbox?.y0 || 0) + (targetWord.bbox?.y1 || 0) / 2;
+                                
+                                const rightNumbers = [];
+                                words.forEach((word) => {
+                                    const wordText = word.text || '';
+                                    const cleanText = wordText.replace(/[^0-9]/g, '');
+                                    if (cleanText && cleanText.length >= 4 && cleanText.length <= 7) {
+                                        const wordX0 = word.bbox?.x0 || 0;
+                                        const wordY = (word.bbox?.y0 || 0) + (word.bbox?.y1 || 0) / 2;
+                                        const yDiff = Math.abs(wordY - targetY);
+                                        
+                                        if (yDiff < 30 && wordX0 > targetX) {
+                                            rightNumbers.push({
+                                                value: parseInt(cleanText),
+                                                distance: wordX0 - targetX,
+                                                word
+                                            });
+                                        }
+                                    }
+                                });
+                                
+                                if (rightNumbers.length > 0) {
+                                    return rightNumbers.sort((a, b) => a.distance - b.distance)[0].value;
+                                }
+                                return null;
+                            };
+
+                            // "확정요금" 아래의 숫자를 찾기
+                            const findByKeywordBelow = (keywords) => {
+                                let targetLineIdx = -1;
+                                for (let i = 0; i < lines.length; i++) {
+                                    const lineText = lines[i].text || '';
+                                    if (keywords.some(k => lineText.includes(k))) {
+                                        targetLineIdx = i;
+                                        break;
+                                    }
+                                }
+                                
+                                if (targetLineIdx === -1 || targetLineIdx >= lines.length - 1) return null;
+                                
+                                // 다음 라인과 그 다음 라인에서 숫자 찾기
+                                for (let i = targetLineIdx + 1; i < Math.min(targetLineIdx + 3, lines.length); i++) {
+                                    const nextLineText = (lines[i].text || '').replace(/\s+/g, '');
+                                    const match = nextLineText.replace(/[^0-9]/g, '').match(/\d{4,7}/);
+                                    if (match) {
+                                        return parseInt(match[0], 10);
+                                    }
+                                }
+                                return null;
+                            };
+
                             const bottomRightAmount = () => {
                                 if (!numberCandidates.length) return null;
                                 const maxY = Math.max(...numberCandidates.map(c => c.yCenter));
@@ -531,6 +596,15 @@
                             let detectedAmount = findRevenueByPosition();
                             if (!detectedAmount) {
                                 detectedAmount = findRevenueInParentheses();
+                            }
+                            if (!detectedAmount) {
+                                detectedAmount = findByKeywordRight(["예상수익금"]);
+                            }
+                            if (!detectedAmount) {
+                                detectedAmount = findByKeywordBelow(["확정요금"]);
+                            }
+                            if (!detectedAmount) {
+                                detectedAmount = findByKeywordRight(["실수익"]);
                             }
                             if (!detectedAmount) {
                                 detectedAmount = findByKeyword([/수익금/, /수익금:/]);
