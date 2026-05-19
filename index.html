@@ -378,7 +378,41 @@
         const loadingText = document.getElementById('ocrLoading');
         loadingText.style.display = 'block';
 
-        Tesseract.recognize(input.files[0], 'kor+eng').then((result) => {
+        // 이미지 전처리: 캔버스를 사용해서 크기 축소 및 품질 최적화
+        const file = input.files[0];
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const maxWidth = 800;
+                const maxHeight = 600;
+                let width = img.width;
+                let height = img.height;
+                
+                // 비율 유지하면서 최대 크기로 축소
+                if (width > height) {
+                    if (width > maxWidth) {
+                        height = Math.round((height * maxWidth) / width);
+                        width = maxWidth;
+                    }
+                } else {
+                    if (height > maxHeight) {
+                        width = Math.round((width * maxHeight) / height);
+                        height = maxHeight;
+                    }
+                }
+                
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                
+                // 최적화된 이미지 blob으로 변환
+                canvas.toBlob((blob) => {
+                    Tesseract.recognize(blob, 'kor+eng', {
+                        logger: m => console.log(m)
+                    }).then((result) => {
             loadingText.style.display = 'none';
             const text = result.data.text || '';
             const words = result.data.words || [];
@@ -468,10 +502,15 @@
             } else {
                 alert("요금 글자나 금액을 찾지 못했습니다. 우측 입력창에 수동으로 합산해 주세요.");
             }
-        }).catch(() => {
-            loadingText.style.display = 'none';
-            alert("분석 실패: 수동 기입 요망");
-        });
+                    }).catch(() => {
+                        loadingText.style.display = 'none';
+                        alert("분석 실패: 수동 기입 요망");
+                    });
+                }, 'image/jpeg', 0.85);
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
     }
 
     function setUploadComplete() {
