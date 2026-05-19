@@ -65,14 +65,9 @@
         </select>
     </div>
     
+    
     <div class="section">
-        <h2>1. 멤버별 실시간 '요금' 업로드 현황</h2>
-        <div id="realtimeStatusContainer">
-            </div>
-    </div>
-
-    <div class="section">
-        <h2>2. 내 콜카드 등록 (<span id="myNameLabel" style="color:var(--primary-color);">멤버1</span>)</h2>
+        <h2>1. 내 콜카드 등록 (<span id="myNameLabel" style="color:var(--primary-color);">멤버1</span>)</h2>
         
         <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
             <button type="button" style="width:auto; padding:8px 12px; background:#8b5cf6; font-size:13px;" onclick="toggleCalculator()">🧮 계산기</button>
@@ -107,11 +102,11 @@
         </div>
 
         <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px;">
-            <span>현재까지 내 누적 요금 합산:</span>
+            <span>요금 합계:</span>
             <input type="number" id="myRevenueInput" value="0" style="flex:1; padding:8px; text-align:right; font-size:16px; border-radius:6px; border:1px solid #d1d5db;"> 원
         </div>
         <div style="display:flex; gap:10px; align-items:center; margin-bottom:10px;">
-            <span>직접 입력 금액:</span>
+            <span>직접입력:</span>
             <input type="number" id="manualAmountInput" value="0" style="flex:1; padding:8px; text-align:right; font-size:16px; border-radius:6px; border:1px solid #d1d5db;"> 원
             <button type="button" style="width:auto; padding:10px 14px; background:#2563eb;" onclick="addManualAmount()">추가</button>
         </div>
@@ -127,12 +122,12 @@
     </div>
 
     <div class="section">
-        <h2>3. 멤버별 계좌 정보</h2>
+        <h2>2. 멤버별 계좌 정보</h2>
         <div id="memberAccountList"></div>
     </div>
 
     <div class="section">
-        <h2>4. 선택 멤버 정산</h2>
+        <h2>3. 선택 멤버 정산</h2>
         <div id="memberSelector" style="display:grid; gap:8px; padding-bottom:10px;"></div>
         <div class="summary-card" style="background:#f8fafc; border-color:#c7d2fe;">
             <div class="summary-item">
@@ -245,14 +240,21 @@
 
     function renderMemberSelector() {
         const selector = document.getElementById('memberSelector');
+        const baseAmount = parseInt(document.getElementById('myRevenueInput').value) || 0;
+        const count = selectedMembers.size;
+        const share = count > 0 ? Math.floor(baseAmount / count) : 0;
         let html = '';
         Object.keys(memberAccounts).forEach(key => {
             const label = memberAccounts[key].label || key;
             const checked = selectedMembers.has(key) ? 'checked' : '';
+            const memberShare = selectedMembers.has(key) ? `${share.toLocaleString()} 원` : '-';
             html += `
-                <label style="display:flex; align-items:center; gap:10px; background:#fff; padding:10px 12px; border:1px solid #d1d5db; border-radius:8px; cursor:pointer;">
-                    <input type="checkbox" onchange="toggleMemberSelection('${key}', this.checked)" ${checked}>
-                    <span>${label} (${key})</span>
+                <label style="display:flex; align-items:center; gap:10px; justify-content:space-between; background:#fff; padding:10px 12px; border:1px solid #d1d5db; border-radius:8px; cursor:pointer;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <input type="checkbox" onchange="toggleMemberSelection('${key}', this.checked)" ${checked}>
+                        <span>${label} (${key})</span>
+                    </div>
+                    <span style="font-weight:bold; color:#16a34a;">${memberShare}</span>
                 </label>
             `;
         });
@@ -289,6 +291,7 @@
         document.getElementById('selectedCount').innerText = `${count} 명`;
         document.getElementById('selectedShare').innerText = share.toLocaleString() + ' 원';
         document.getElementById('selectedPureRevenue').innerText = pureRevenue.toLocaleString() + ' 원';
+        renderMemberSelector();
     }
 
     window.addEventListener('load', () => {
