@@ -453,180 +453,72 @@
                                 }
                             });
 
-                            // "수익금" 우측의 숫자를 위치 기반으로 찾기
-                            const findRevenueByPosition = () => {
-                                let revenueWord = null;
-                                for (let word of words) {
-                                    if ((word.text || '').includes('수익금')) {
-                                        revenueWord = word;
-                                        break;
-                                    }
-                                }
-                                
-                                if (!revenueWord) return null;
-                                
-                                const revenueX = revenueWord.bbox?.x1 || 0;
-                                const revenueY = (revenueWord.bbox?.y0 || 0) + (revenueWord.bbox?.y1 || 0) / 2;
-                                
-                                const rightNumbers = [];
-                                words.forEach((word) => {
-                                    const wordText = word.text || '';
-                                    const isNumber = /^\d+$/.test(wordText);
-                                    if (isNumber) {
-                                        const wordX0 = word.bbox?.x0 || 0;
-                                        const wordY = (word.bbox?.y0 || 0) + (word.bbox?.y1 || 0) / 2;
-                                        const yDiff = Math.abs(wordY - revenueY);
-                                        
-                                        if (yDiff < 30 && wordX0 > revenueX) {
-                                            rightNumbers.push({
-                                                value: parseInt(wordText),
-                                                distance: wordX0 - revenueX,
-                                                word
-                                            });
-                                        }
-                                    }
-                                });
-                                
-                                if (rightNumbers.length > 0) {
-                                    return rightNumbers.sort((a, b) => a.distance - b.distance)[0].value;
-                                }
+
+                            const normalizeText = (value) => (value || '').replace(/\s+/g, '').toLowerCase();
+
+                            const findNumberAfterKeyword = (lineText, keyword) => {
+                                const normalizedLine = normalizeText(lineText);
+                                const normalizedKeyword = normalizeText(keyword);
+                                const idx = normalizedLine.indexOf(normalizedKeyword);
+                                if (idx === -1) return null;
+                                const remainder = normalizedLine.slice(idx + normalizedKeyword.length);
+                                const match = remainder.match(/([0-9]{4,7})/);
+                                if (match) return parseInt(match[1], 10);
                                 return null;
                             };
 
-                            // 먼저 모든 텍스트에서 (수익금:xxx원) 형식 찾기
-                            const findRevenueInParentheses = () => {
-                                const fullText = result.data.text || '';
-                                const match = fullText.replace(/\s+/g, '').match(/\(수익금:([0-9,]+)/);
-                                if (match) {
-                                    const value = match[1].replace(/,/g, '');
-                                    return parseInt(value, 10);
-                                }
-                                return null;
-                            };
-
-                            const findByKeyword = (patterns) => {
+                            const findKeywordLineAmount = (keywords) => {
                                 for (let i = 0; i < lines.length; i++) {
-                                    const lineText = (lines[i].text || '').replace(/\s+/g, '');
-                                    if (patterns.some(pattern => pattern.test(lineText))) {
-                                        if (/수익금:/.test(lineText)) {
-                                            const match = lineText.replace(/,/g, '').match(/수익금:(\d{4,7})/);
-                                            if (match) return parseInt(match[1], 10);
+                                    const rawLine = lines[i].text || '';
+                                    const normalizedLine = normalizeText(rawLine);
+                                    for (let keyword of keywords) {
+                                        if (normalizedLine.includes(normalizeText(keyword))) {
+                                            const number = findNumberAfterKeyword(rawLine, keyword);
+                                            if (number) return number;
+                                            const nextLine = (lines[i + 1] && lines[i + 1].text) || '';
+                                            const nextMatch = normalizeText(nextLine).match(/([0-9]{4,7})/);
+                                            if (nextMatch) return parseInt(nextMatch[1], 10);
                                         }
-                                        let match = lineText.replace(/,/g, '').match(/\d{4,7}/);
-                                        if (match) return parseInt(match[0], 10);
-                                        const nextLine = (lines[i + 1] && (lines[i + 1].text || '').replace(/\s+/g, '')) || '';
-                                        match = nextLine.replace(/,/g, '').match(/\d{4,7}/);
-                                        if (match) return parseInt(match[0], 10);
                                     }
                                 }
                                 return null;
                             };
 
-                            // "예상수익금", "실수익" 등의 우측 숫자를 찾기
-                            const findByKeywordRight = (keywords) => {
+                            const findKeywordRightAmount = (keywords) => {
                                 let targetWord = null;
                                 for (let word of words) {
-                                    const wordText = word.text || '';
-                                    if (keywords.some(k => wordText.includes(k))) {
+                                    const normalized = normalizeText(word.text);
+                                    if (keywords.some(k => normalized.includes(normalizeText(k)))) {
                                         targetWord = word;
                                         break;
                                     }
                                 }
-                                
                                 if (!targetWord) return null;
-                                
+
                                 const targetX = targetWord.bbox?.x1 || 0;
-                                const targetY = (targetWord.bbox?.y0 || 0) + (targetWord.bbox?.y1 || 0) / 2;
-                                
-                                const rightNumbers = [];
+                                const targetY = ((targetWord.bbox?.y0 || 0) + (targetWord.bbox?.y1 || 0)) / 2;
+                                const candidates = [];
                                 words.forEach((word) => {
-                                    const wordText = word.text || '';
-                                    const cleanText = wordText.replace(/[^0-9]/g, '');
-                                    if (cleanText && cleanText.length >= 4 && cleanText.length <= 7) {
-                                        const wordX0 = word.bbox?.x0 || 0;
-                                        const wordY = (word.bbox?.y0 || 0) + (word.bbox?.y1 || 0) / 2;
-                                        const yDiff = Math.abs(wordY - targetY);
-                                        
-                                        if (yDiff < 30 && wordX0 > targetX) {
-                                            rightNumbers.push({
-                                                value: parseInt(cleanText),
-                                                distance: wordX0 - targetX,
-                                                word
-                                            });
-                                        }
-                                    }
+                                    const cleanText = (word.text || '').replace(/[^0-9]/g, '');
+                                    if (!cleanText || cleanText.length < 4 || cleanText.length > 7) return;
+                                    const wordX0 = word.bbox?.x0 || 0;
+                                    const wordY = ((word.bbox?.y0 || 0) + (word.bbox?.y1 || 0)) / 2;
+                                    if (wordX0 <= targetX) return;
+                                    if (Math.abs(wordY - targetY) > 30) return;
+                                    candidates.push({ value: parseInt(cleanText, 10), distance: wordX0 - targetX });
                                 });
-                                
-                                if (rightNumbers.length > 0) {
-                                    return rightNumbers.sort((a, b) => a.distance - b.distance)[0].value;
-                                }
-                                return null;
+                                if (!candidates.length) return null;
+                                return candidates.sort((a, b) => a.distance - b.distance)[0].value;
                             };
 
-                            // "확정요금" 아래의 숫자를 찾기
-                            const findByKeywordBelow = (keywords) => {
-                                let targetLineIdx = -1;
-                                for (let i = 0; i < lines.length; i++) {
-                                    const lineText = lines[i].text || '';
-                                    if (keywords.some(k => lineText.includes(k))) {
-                                        targetLineIdx = i;
-                                        break;
-                                    }
-                                }
-                                
-                                if (targetLineIdx === -1 || targetLineIdx >= lines.length - 1) return null;
-                                
-                                // 다음 라인과 그 다음 라인에서 숫자 찾기
-                                for (let i = targetLineIdx + 1; i < Math.min(targetLineIdx + 3, lines.length); i++) {
-                                    const nextLineText = (lines[i].text || '').replace(/\s+/g, '');
-                                    const match = nextLineText.replace(/[^0-9]/g, '').match(/\d{4,7}/);
-                                    if (match) {
-                                        return parseInt(match[0], 10);
-                                    }
-                                }
-                                return null;
+                            const findRevenueAmount = () => {
+                                const keywordGroups = ["수익금", "예상수익금", "실수익", "확정요금"];
+                                const rightAmount = findKeywordRightAmount(keywordGroups);
+                                if (rightAmount) return rightAmount;
+                                return findKeywordLineAmount(keywordGroups);
                             };
 
-                            const bottomRightAmount = () => {
-                                if (!numberCandidates.length) return null;
-                                const maxY = Math.max(...numberCandidates.map(c => c.yCenter));
-                                const bottomCandidates = numberCandidates.filter(c => c.yCenter >= maxY * 0.65);
-                                if (!bottomCandidates.length) return null;
-                                return bottomCandidates.sort((a, b) => b.value - a.value)[0].value;
-                            };
-
-                            // "수익금" 우측의 위치 기반 탐색을 최우선으로
-                            let detectedAmount = findRevenueByPosition();
-                            if (!detectedAmount) {
-                                detectedAmount = findRevenueInParentheses();
-                            }
-                            if (!detectedAmount) {
-                                detectedAmount = findByKeywordRight(["예상수익금"]);
-                            }
-                            if (!detectedAmount) {
-                                detectedAmount = findByKeywordBelow(["확정요금"]);
-                            }
-                            if (!detectedAmount) {
-                                detectedAmount = findByKeywordRight(["실수익"]);
-                            }
-                            if (!detectedAmount) {
-                                detectedAmount = findByKeyword([/수익금/, /수익금:/]);
-                            }
-                            if (!detectedAmount) {
-                                detectedAmount = findByKeyword([/총수입/, /총수입:/, /총수입/]);
-                            }
-                            if (!detectedAmount) {
-                                detectedAmount = findByKeyword([/합계/, /총합계/, /총액/, /총금액/, /요금/]);
-                            }
-                            if (!detectedAmount) {
-                                detectedAmount = bottomRightAmount();
-                            }
-                            if (!detectedAmount) {
-                                const fallback = text.replace(/,/g, '').match(/\d{4,7}/g);
-                                if (fallback && fallback.length) {
-                                    detectedAmount = Math.max(...fallback.map(Number));
-                                }
-                            }
+                            const detectedAmount = findRevenueAmount();
 
                             if (detectedAmount) {
                                 totalDetected += detectedAmount;
