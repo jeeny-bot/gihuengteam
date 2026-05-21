@@ -58,10 +58,10 @@
     <div class="my-selector">
         📱 현재 내 스마트폰 소유자 설정: 
         <select id="myIdentity" onchange="changeIdentity()" style="padding: 5px; font-size: 14px; border-radius: 4px;">
-            <option value="멤버1">멤버1</option>
-            <option value="멤버2">멤버2</option>
-            <option value="멤버3">멤버3</option>
-            <option value="멤버4">멤버4</option>
+            <option value="멤버1">김영진</option>
+            <option value="멤버2">이서백</option>
+            <option value="멤버3">이호길</option>
+            <option value="멤버4">정진하</option>
         </select>
     </div>
     
@@ -97,6 +97,7 @@
             </div>
             <div style="display:flex; gap:8px;">
                 <button onclick="calcEqual()" style="flex:1; padding:10px; background:#059669; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">=</button>
+                <button onclick="calcBackspace()" style="flex:1; padding:10px; background:#f97316; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">←</button>
                 <button onclick="applyCalcResult()" style="flex:1; padding:10px; background:#10b981; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">반영</button>
             </div>
         </div>
@@ -195,10 +196,10 @@
     const db = firebase.database();
 
     const memberAccounts = {
-        "멤버1": { label: "멤버1", bank: "국민", account: "123456-01-123456" },
-        "멤버2": { label: "멤버2", bank: "신한", account: "110-123-456789" },
-        "멤버3": { label: "멤버3", bank: "카카오", account: "3333-01-12345" },
-        "멤버4": { label: "멤버4", bank: "우리", account: "1002-123-456789" }
+        "멤버1": { label: "김영진", bank: "토스", account: "1000 0348 4243" },
+        "멤버2": { label: "이서백", bank: "신협", account: "132 144 338160" },
+        "멤버3": { label: "이호길", bank: "", account: "3333-01-12345" },
+        "멤버4": { label: "정진하", bank: "우리", account: "1002 963 307626" }
     };
 
     let myName = "멤버1";
@@ -418,14 +419,33 @@
         }
     }
 
+    function calcBackspace() {
+        const display = document.getElementById('calcDisplay');
+        let value = display.value || '';
+        if (value.length <= 1) {
+            value = '0';
+            calcExpression = '';
+        } else {
+            value = value.slice(0, -1);
+            calcExpression = value;
+        }
+        display.value = value;
+    }
+
     function applyCalcResult() {
         const resultValue = parseInt(document.getElementById('calcDisplay').value, 10) || 0;
         if (resultValue <= 0) {
             alert('0원보다 큰 금액을 계산해 주세요.');
             return;
         }
-        document.getElementById('manualAmountInput').value = resultValue;
-        alert(`계산 결과 ${resultValue.toLocaleString()}원이 입력되었습니다. 하단의 "추가" 버튼을 눌러 반영하세요.`);
+        const currentInput = document.getElementById('myRevenueInput');
+        const currentTotal = parseInt(currentInput.value, 10) || 0;
+        const newTotal = currentTotal + resultValue;
+        currentInput.value = newTotal;
+        db.ref('team_drive/' + myName).update({ revenue: newTotal });
+        saveLocalState();
+        updateSelectedShare(currentTotalRevenue);
+        alert(`계산 결과 ${resultValue.toLocaleString()}원이 요금 합계에 추가되어 총 ${newTotal.toLocaleString()}원이 되었습니다.`);
     }
 
     // 🔍 "요금" 타겟 정밀 인식 처리 스크립트 - 여러 파일 지원
@@ -507,19 +527,28 @@
                             });
 
 
-                            const normalizeText = (value) => (value || '').replace(/[\s,\.]+/g, '').toLowerCase();
+                            const normalizeText = (value) => (value || '').replace(/[\s,\.\:\(\)\-\/원]+/g, '').toLowerCase();
+                            const extractDigits = (value) => {
+                                const cleaned = (value || '').replace(/[^0-9]/g, '');
+                                const match = cleaned.match(/([0-9]{3,12})/);
+                                return match ? parseInt(match[1], 10) : null;
+                            };
+
+                            const findDigitsAfterNormalizedKeyword = (normalizedLine, keyword) => {
+                                const idx = normalizedLine.indexOf(keyword);
+                                if (idx === -1) return null;
+                                const tail = normalizedLine.slice(idx + keyword.length);
+                                const match = tail.match(/([0-9]{3,12})/);
+                                return match ? parseInt(match[1], 10) : null;
+                            };
 
                             const findNumberAfterKeyword = (lineText, keyword) => {
-                                const normalizedLine = normalizeText(lineText);
-                                const normalizedKeyword = normalizeText(keyword);
-                                const idx = normalizedLine.indexOf(normalizedKeyword);
+                                const lowerLine = normalizeText(lineText);
+                                const lowerKeyword = normalizeText(keyword);
+                                const idx = lowerLine.indexOf(lowerKeyword);
                                 if (idx === -1) return null;
-                                const remainder = normalizedLine.slice(idx + normalizedKeyword.length);
-                                const digits = remainder.replace(/[^0-9]/g, '');
-                                if (digits.length >= 4 && digits.length <= 7) return parseInt(digits, 10);
-                                const match = remainder.match(/([0-9]{4,7})/);
-                                if (match) return parseInt(match[1], 10);
-                                return null;
+                                const remainder = lowerLine.slice(idx + lowerKeyword.length);
+                                return extractDigits(remainder);
                             };
 
                             const findKeywordLineAmount = (keywords) => {
@@ -527,12 +556,23 @@
                                     const rawLine = lines[i].text || '';
                                     const normalizedLine = normalizeText(rawLine);
                                     for (let keyword of keywords) {
-                                        if (normalizedLine.includes(normalizeText(keyword))) {
-                                            const number = findNumberAfterKeyword(rawLine, keyword);
-                                            if (number) return number;
-                                            const nextLine = (lines[i + 1] && lines[i + 1].text) || '';
-                                            const nextMatch = normalizeText(nextLine).match(/([0-9]{4,7})/);
-                                            if (nextMatch) return parseInt(nextMatch[1], 10);
+                                        const normalizedKeyword = normalizeText(keyword);
+                                        if (!normalizedLine.includes(normalizedKeyword)) continue;
+
+                                        const number = findDigitsAfterNormalizedKeyword(normalizedLine, normalizedKeyword);
+                                        if (number) return number;
+
+                                        const keywordRegex = new RegExp(`${keyword}[^0-9]{0,10}([0-9,]{3,12})`, 'i');
+                                        const match = rawLine.match(keywordRegex);
+                                        if (match) {
+                                            const digits = (match[1] || '').replace(/[^0-9]/g, '');
+                                            if (digits.length >= 3) return parseInt(digits, 10);
+                                        }
+
+                                        for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+                                            const nextLine = lines[j].text || '';
+                                            const nextAdjacent = extractDigits(nextLine) || extractDigits(normalizeText(nextLine));
+                                            if (nextAdjacent) return nextAdjacent;
                                         }
                                     }
                                 }
@@ -540,60 +580,97 @@
                             };
 
                             const findKeywordRightAmount = (keywords) => {
-                                let targetWord = null;
-                                for (let word of words) {
-                                    const normalized = normalizeText(word.text);
-                                    if (keywords.some(k => normalized.includes(normalizeText(k)))) {
-                                        targetWord = word;
-                                        break;
+                                const normalizedKeywords = keywords.map(normalizeText);
+                                const candidates = [];
+                                const wordTexts = words.map(word => normalizeText(word.text || ''));
+
+                                for (let i = 0; i < words.length; i++) {
+                                    let concat = '';
+                                    for (let end = i; end < Math.min(i + 5, words.length); end++) {
+                                        concat += wordTexts[end] || '';
+
+                                        for (const keyword of normalizedKeywords) {
+                                            if (!concat.includes(keyword)) continue;
+
+                                            const targetX = words[end].bbox?.x1 || 0;
+                                            const targetY = ((words[end].bbox?.y0 || 0) + (words[end].bbox?.y1 || 0)) / 2;
+                                            for (let j = end + 1; j < Math.min(end + 8, words.length); j++) {
+                                                const amount = extractDigits(words[j].text || '');
+                                                if (!amount) continue;
+                                                const wordX0 = words[j].bbox?.x0 || 0;
+                                                const wordY = ((words[j].bbox?.y0 || 0) + (words[j].bbox?.y1 || 0)) / 2;
+                                                if (wordX0 <= targetX) continue;
+                                                if (Math.abs(wordY - targetY) > 70) continue;
+                                                candidates.push({ value: amount, distance: wordX0 - targetX });
+                                                break;
+                                            }
+                                        }
                                     }
                                 }
-                                if (!targetWord) return null;
 
-                                const targetX = targetWord.bbox?.x1 || 0;
-                                const targetY = ((targetWord.bbox?.y0 || 0) + (targetWord.bbox?.y1 || 0)) / 2;
-                                const candidates = [];
-                                words.forEach((word) => {
-                                    const cleanText = (word.text || '').replace(/[^0-9]/g, '');
-                                    if (!cleanText || cleanText.length < 4 || cleanText.length > 7) return;
-                                    const wordX0 = word.bbox?.x0 || 0;
-                                    const wordY = ((word.bbox?.y0 || 0) + (word.bbox?.y1 || 0)) / 2;
-                                    if (wordX0 <= targetX) return;
-                                    if (Math.abs(wordY - targetY) > 30) return;
-                                    candidates.push({ value: parseInt(cleanText, 10), distance: wordX0 - targetX });
-                                });
                                 if (!candidates.length) return null;
-                                return candidates.sort((a, b) => a.distance - b.distance)[0].value;
+                                candidates.sort((a, b) => a.distance - b.distance);
+                                return candidates[0].value;
                             };
 
                             const findRevenueFromFullText = (text) => {
-                                const cleanedText = normalizeText(text);
-                                const keywordPatterns = ["수익금", "예상수익금", "실수익", "확정요금"];
+                                const keywordPatterns = ["수익금", "예상수익금", "실수익", "확정요금", "요금합계", "총금액", "정산금액", "최종금액"];
+                                const rawText = text || '';
+                                const collapsedText = rawText.replace(/\s+/g, '');
+
                                 for (const keyword of keywordPatterns) {
-                                    const idx = cleanedText.indexOf(normalizeText(keyword));
-                                    if (idx !== -1) {
-                                        const remainder = cleanedText.slice(idx + normalizeText(keyword).length);
-                                        const digits = remainder.replace(/[^0-9]/g, '');
-                                        if (digits.length >= 4 && digits.length <= 7) return parseInt(digits, 10);
+                                    const regex = new RegExp(`${keyword}[^0-9]{0,12}([0-9,]{3,12})`, 'i');
+                                    const match = rawText.match(regex);
+                                    if (match) {
+                                        const digits = (match[1] || '').replace(/[^0-9]/g, '');
+                                        if (digits.length >= 3) return parseInt(digits, 10);
                                     }
                                 }
-                                return null;
+
+                                const normalized = normalizeText(rawText);
+                                for (const keyword of keywordPatterns) {
+                                    const normalizedKeyword = normalizeText(keyword);
+                                    const idx = normalized.indexOf(normalizedKeyword);
+                                    if (idx !== -1) {
+                                        const tail = normalized.slice(idx + normalizedKeyword.length);
+                                        const number = extractDigits(tail);
+                                        if (number) return number;
+                                    }
+                                }
+
+                                for (const keyword of keywordPatterns) {
+                                    const idx = collapsedText.indexOf(keyword);
+                                    if (idx !== -1) {
+                                        const tail = collapsedText.slice(idx + keyword.length);
+                                        const match = tail.match(/([0-9]{3,12})/);
+                                        if (match) return parseInt(match[1], 10);
+                                    }
+                                }
+
+                                const fallback = words
+                                    .map(w => extractDigits(w.text || ''))
+                                    .filter(v => v && v >= 1000)
+                                    .sort((a, b) => b - a);
+                                return fallback.length ? fallback[0] : null;
                             };
 
                             const findRevenueAmount = () => {
                                 const keywordGroups = ["수익금", "예상수익금", "실수익", "확정요금"];
                                 const rightAmount = findKeywordRightAmount(keywordGroups);
-                                if (rightAmount) return rightAmount;
+                                if (rightAmount !== null) return rightAmount;
                                 const lineAmount = findKeywordLineAmount(keywordGroups);
-                                if (lineAmount) return lineAmount;
+                                if (lineAmount !== null) return lineAmount;
                                 return findRevenueFromFullText(text);
                             };
 
                             const detectedAmount = findRevenueAmount();
+                            console.log(`파일 ${fileIndex + 1} 검사 결과:`, { detectedAmount, text });
 
-                            if (detectedAmount) {
+                            if (detectedAmount !== null) {
                                 totalDetected += detectedAmount;
                                 console.log(`파일 ${fileIndex + 1}: ${detectedAmount.toLocaleString()}원 인식됨`);
+                            } else {
+                                console.log(`파일 ${fileIndex + 1}: 수익금 인식 실패`, { lines: lines.map(l => l.text), words: words.map(w => w.text) });
                             }
                             
                             // 다음 파일 처리
